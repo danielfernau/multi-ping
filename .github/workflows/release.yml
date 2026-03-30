@@ -1,0 +1,79 @@
+name: release
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build static binary
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          make "build-linux-${{ matrix.goarch }}"
+
+      - name: Archive build
+        run: |
+          tar -C dist -czf "dist/multi-ping-linux-${{ matrix.goarch }}.tar.gz" "multi-ping-linux-${{ matrix.goarch }}"
+
+      - name: Generate checksum
+        run: |
+          cd dist
+          sha256sum "multi-ping-linux-${{ matrix.goarch }}.tar.gz" > "multi-ping-linux-${{ matrix.goarch }}.sha256"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goarch }}
+          path: |
+            dist/multi-ping-linux-${{ matrix.goarch }}
+            dist/multi-ping-linux-${{ matrix.goarch }}.tar.gz
+            dist/multi-ping-linux-${{ matrix.goarch }}.sha256
+
+  release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/multi-ping-linux-amd64
+            dist/multi-ping-linux-amd64.tar.gz
+            dist/multi-ping-linux-amd64.sha256
+            dist/multi-ping-linux-arm64
+            dist/multi-ping-linux-arm64.tar.gz
+            dist/multi-ping-linux-arm64.sha256
